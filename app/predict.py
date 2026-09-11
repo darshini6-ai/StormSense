@@ -12,7 +12,7 @@ from models.convlstm_v3 import StormSenseConvLSTMv3
 # Configuration
 # ============================================================
 
-FILE = r"V:\StormSense\SEVIR_VIL_STORMEVENTS_2019_0101_0630.h5"
+FILE = "data/sevir/vil/SEVIR_VIL_STORMEVENTS_2019_0101_0630.h5"
 MODEL_PATH = "models/stormsense_convlstm_v3_multistep.pth"
 
 INPUT_FRAMES = 12

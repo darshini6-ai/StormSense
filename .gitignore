@@ -31,3 +31,8 @@ data/results/
 # IDE
 .vscode/
 .idea/
+# Local SEVIR dataset
+data/sevir/vil/*.h5
+
+# Generated evaluation artifacts
+app/event_disjoint_v3_results.npz
