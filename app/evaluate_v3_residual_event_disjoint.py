@@ -5,6 +5,7 @@ from torch.utils.data import DataLoader, Subset
 
 from app.sevir_dataset import SEVIRVILDataset
 from models.convlstm_v3 import StormSenseConvLSTMv3
+from models.convlstm_v3_residual import StormSenseConvLSTMv3Residual
 
 
 # ============================================================
@@ -12,7 +13,9 @@ from models.convlstm_v3 import StormSenseConvLSTMv3
 # ============================================================
 
 FILE = "data/sevir/vil/SEVIR_VIL_STORMEVENTS_2019_0101_0630.h5"
-MODEL_FILE = "models/stormsense_convlstm_v3_multistep.pth"
+
+V3_MODEL_FILE = "models/stormsense_convlstm_v3_multistep.pth"
+RESIDUAL_MODEL_FILE = "models/stormsense_convlstm_v3_residual_experimental.pth"
 
 INPUT_FRAMES = 12
 TARGET_FRAMES = 12
@@ -31,15 +34,14 @@ TEST_RATIO = 0.15
 # ============================================================
 
 device = torch.device(
-    "mps" if torch.backends.mps.is_available()
-    else "cuda" if torch.cuda.is_available()
+    "cuda" if torch.cuda.is_available()
+    else "mps" if torch.backends.mps.is_available()
     else "cpu"
 )
 
 print("=" * 75)
-print("STORMSENSE - EVENT-DISJOINT V3 EVALUATION")
+print("STORMSENSE - V3 vs RESIDUAL V3 EVENT-DISJOINT EVALUATION")
 print("=" * 75)
-
 print("Device:", device)
 
 
@@ -62,14 +64,8 @@ rng = np.random.default_rng(SEED)
 event_indices = np.arange(num_events)
 rng.shuffle(event_indices)
 
-train_end = int(
-    TRAIN_RATIO * num_events
-)
-
-val_end = int(
-    (TRAIN_RATIO + VAL_RATIO)
-    * num_events
-)
+train_end = int(TRAIN_RATIO * num_events)
+val_end = int((TRAIN_RATIO + VAL_RATIO) * num_events)
 
 train_events = event_indices[:train_end]
 val_events = event_indices[train_end:val_end]
@@ -99,7 +95,7 @@ print("\nWindows per event:", windows_per_event)
 
 
 # ============================================================
-# CONVERT EVENTS → WINDOW INDICES
+# CONVERT EVENTS -> WINDOW INDICES
 # ============================================================
 
 def make_window_indices(events):
@@ -108,61 +104,27 @@ def make_window_indices(events):
 
     for event_id in events:
 
-        start = (
-            int(event_id)
-            * windows_per_event
-        )
+        start = int(event_id) * windows_per_event
+        end = start + windows_per_event
 
-        end = (
-            start
-            + windows_per_event
-        )
-
-        indices.extend(
-            range(start, end)
-        )
+        indices.extend(range(start, end))
 
     return indices
 
 
-train_indices = make_window_indices(
-    train_events
-)
+test_indices = make_window_indices(test_events)
 
-val_indices = make_window_indices(
-    val_events
-)
-
-test_indices = make_window_indices(
-    test_events
-)
-
-print("\nWindow counts:")
-print("Train windows:", len(train_indices))
-print("Validation windows:", len(val_indices))
-print("Test windows:", len(test_indices))
+print("\nTest windows:", len(test_indices))
 
 
 # ============================================================
-# SANITY CHECK FOR EVENT DISJOINTNESS
+# SANITY CHECK
 # ============================================================
 
-assert len(
-    set(train_events)
-    & set(val_events)
-) == 0
+assert len(set(train_events) & set(test_events)) == 0
+assert len(set(val_events) & set(test_events)) == 0
 
-assert len(
-    set(train_events)
-    & set(test_events)
-) == 0
-
-assert len(
-    set(val_events)
-    & set(test_events)
-) == 0
-
-print("\nEvent-disjointness check: PASS")
+print("Event-disjointness check: PASS")
 
 
 # ============================================================
@@ -183,31 +145,59 @@ test_loader = DataLoader(
 
 
 # ============================================================
-# MODEL
+# LOAD V3
 # ============================================================
 
-model = StormSenseConvLSTMv3(
+v3 = StormSenseConvLSTMv3(
     input_channels=1,
-    hidden_channels=32
+    hidden_channels=32,
+    output_channels=1
 ).to(device)
 
-model.load_state_dict(
+v3.load_state_dict(
     torch.load(
-        MODEL_FILE,
+        V3_MODEL_FILE,
         map_location=device
     )
 )
 
-model.eval()
+v3.eval()
 
 print("\nV3 model loaded.")
 
 
 # ============================================================
-# METRICS
+# LOAD RESIDUAL V3
+# ============================================================
+
+residual = StormSenseConvLSTMv3Residual(
+    input_channels=1,
+    hidden_channels=32,
+    output_channels=1
+).to(device)
+
+residual.load_state_dict(
+    torch.load(
+        RESIDUAL_MODEL_FILE,
+        map_location=device
+    )
+)
+
+residual.eval()
+
+print("Residual V3 model loaded.")
+
+
+# ============================================================
+# METRIC STORAGE
 # ============================================================
 
 v3_squared_error = np.zeros(
+    TARGET_FRAMES,
+    dtype=np.float64
+)
+
+residual_squared_error = np.zeros(
     TARGET_FRAMES,
     dtype=np.float64
 )
@@ -227,7 +217,7 @@ horizon_elements = np.zeros(
 # TEST
 # ============================================================
 
-print("\nRunning final event-disjoint test...")
+print("\nRunning fair event-disjoint comparison...")
 
 with torch.no_grad():
 
@@ -243,7 +233,18 @@ with torch.no_grad():
         # V3
         # ----------------------------------------------------
 
-        prediction = model(
+        v3_prediction = v3(
+            past,
+            future_frames=None,
+            future_steps=TARGET_FRAMES,
+            teacher_forcing_ratio=0.0
+        )
+
+        # ----------------------------------------------------
+        # Residual V3
+        # ----------------------------------------------------
+
+        residual_prediction = residual(
             past,
             future_frames=None,
             future_steps=TARGET_FRAMES,
@@ -271,7 +272,12 @@ with torch.no_grad():
         for step in range(TARGET_FRAMES):
 
             v3_error = (
-                prediction[:, step]
+                v3_prediction[:, step]
+                - future[:, step]
+            ) ** 2
+
+            residual_error = (
+                residual_prediction[:, step]
                 - future[:, step]
             ) ** 2
 
@@ -282,6 +288,10 @@ with torch.no_grad():
 
             v3_squared_error[step] += (
                 v3_error.sum().item()
+            )
+
+            residual_squared_error[step] += (
+                residual_error.sum().item()
             )
 
             persistence_squared_error[step] += (
@@ -313,16 +323,27 @@ v3_mse = (
     / horizon_elements
 )
 
+residual_mse = (
+    residual_squared_error
+    / horizon_elements
+)
+
 persistence_mse = (
     persistence_squared_error
     / horizon_elements
 )
 
 overall_v3 = v3_mse.mean()
+overall_residual = residual_mse.mean()
 overall_persistence = persistence_mse.mean()
 
-improvement = (
+v3_improvement = (
     (overall_persistence - overall_v3)
+    / overall_persistence
+) * 100
+
+residual_improvement = (
+    (overall_persistence - overall_residual)
     / overall_persistence
 ) * 100
 
@@ -332,7 +353,7 @@ improvement = (
 # ============================================================
 
 print("\n" + "=" * 75)
-print("FINAL EVENT-DISJOINT TEST RESULTS")
+print("FINAL EVENT-DISJOINT COMPARISON")
 print("=" * 75)
 
 print("\nTest events:", len(test_events))
@@ -340,9 +361,11 @@ print("Test windows:", len(test_indices))
 
 print("\nOverall:")
 print("-------------------------------------------")
-print(f"V3 MSE:          {overall_v3:.6f}")
-print(f"Persistence MSE: {overall_persistence:.6f}")
-print(f"Improvement:     {improvement:.2f}%")
+print(f"V3 MSE:               {overall_v3:.6f}")
+print(f"Residual V3 MSE:      {overall_residual:.6f}")
+print(f"Persistence MSE:      {overall_persistence:.6f}")
+print(f"V3 improvement:       {v3_improvement:.2f}%")
+print(f"Residual improvement: {residual_improvement:.2f}%")
 
 print("\nHorizon-wise:")
 print("-------------------------------------------")
@@ -351,19 +374,23 @@ for step in range(TARGET_FRAMES):
 
     minutes = (step + 1) * 5
 
-    step_improvement = (
-        (
-            persistence_mse[step]
-            - v3_mse[step]
-        )
+    v3_step_improvement = (
+        (persistence_mse[step] - v3_mse[step])
+        / persistence_mse[step]
+    ) * 100
+
+    residual_step_improvement = (
+        (persistence_mse[step] - residual_mse[step])
         / persistence_mse[step]
     ) * 100
 
     print(
         f"{minutes:2d} min | "
-        f"V3={v3_mse[step]:.6f} | "
-        f"Persistence={persistence_mse[step]:.6f} | "
-        f"Improvement={step_improvement:.2f}%"
+        f"V3={v3_mse[step]:.6f} "
+        f"({v3_step_improvement:+.2f}%) | "
+        f"Residual={residual_mse[step]:.6f} "
+        f"({residual_step_improvement:+.2f}%) | "
+        f"Persistence={persistence_mse[step]:.6f}"
     )
 
 
@@ -372,16 +399,19 @@ for step in range(TARGET_FRAMES):
 # ============================================================
 
 np.savez(
-    "event_disjoint_v3_results.npz",
+    "v3_residual_event_disjoint_results.npz",
     test_events=test_events,
     v3_mse=v3_mse,
+    residual_mse=residual_mse,
     persistence_mse=persistence_mse,
     overall_v3=overall_v3,
+    overall_residual=overall_residual,
     overall_persistence=overall_persistence,
-    improvement=improvement
+    v3_improvement=v3_improvement,
+    residual_improvement=residual_improvement
 )
 
 print("\nSaved:")
-print("event_disjoint_v3_results.npz")
+print("v3_residual_event_disjoint_results.npz")
 
-print("\nEvent-disjoint evaluation complete.")
+print("\nComparison complete.")
