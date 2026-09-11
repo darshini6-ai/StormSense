@@ -5,7 +5,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-from models.convlstm_v3 import StormSenseConvLSTMv3
+from models.convlstm_v3_residual import StormSenseConvLSTMv3Residual
 
 
 # ============================================================
@@ -13,7 +13,7 @@ from models.convlstm_v3 import StormSenseConvLSTMv3
 # ============================================================
 
 FILE = "data/sevir/vil/SEVIR_VIL_STORMEVENTS_2019_0101_0630.h5"
-MODEL_PATH = "models/stormsense_convlstm_v3_multistep.pth"
+MODEL_PATH = "models/stormsense_convlstm_v3_residual_event_disjoint.pth"
 
 INPUT_FRAMES = 12
 FUTURE_FRAMES = 12
@@ -148,7 +148,7 @@ def load_model(
     device=None
 ):
     """
-    Load the trained StormSense V3 ConvLSTM model.
+    Load the trained StormSense Residual V3 ConvLSTM model.
     """
 
     if device is None:
@@ -159,7 +159,7 @@ def load_model(
             f"Model checkpoint not found:\n{model_path}"
         )
 
-    model = StormSenseConvLSTMv3(
+    model = StormSenseConvLSTMv3Residual(
         input_channels=1,
         hidden_channels=32,
         output_channels=1
@@ -183,7 +183,6 @@ def load_model(
     model.eval()
 
     return model
-
 
 # ============================================================
 # Prediction
