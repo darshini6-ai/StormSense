@@ -1,0 +1,2 @@
+data/sevir/lght/**/*.h5 filter=lfs diff=lfs merge=lfs -text
+data/sevir/CATALOG.csv filter=lfs diff=lfs merge=lfs -text
