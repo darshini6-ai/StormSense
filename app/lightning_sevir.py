@@ -320,7 +320,7 @@ def lightning_to_model_grid(
         - y_model
     )
 
-        valid = (
+    valid = (
         (x_model >= 0.0)
         & (x_model <= model_size - 1)
         & (y_model >= 0.0)

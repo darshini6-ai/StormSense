@@ -8,10 +8,17 @@ import plotly.graph_objects as go
 
 from app.map_utils import create_vil_map, find_relative_storm_center
 from app.storm_tracker import detect_storm_cells
+from app.multihazard_fusion import build_multihazard_summary
 from app.ui_theme import frame_to_base64_png
 
 
-def render_forecast_analysis_page(past_frames, pred_frames, actual_future_frames, contrast_mode=False):
+def render_forecast_analysis_page(
+    past_frames,
+    pred_frames,
+    actual_future_frames,
+    event_id=None,
+    contrast_mode=False
+):
     """
     Renders the Analytical Forecast Analysis Workspace.
     """
@@ -158,4 +165,208 @@ def render_forecast_analysis_page(past_frames, pred_frames, actual_future_frames
                 <img src="{frame_to_base64_png(pred_frames[s], 'turbo', contrast=contrast_mode)}" style="width: 100%; border-radius: 3px; border: 1px solid var(--border-outline);" />
                 """).strip(),
                 unsafe_allow_html=True
+            )
+
+    # ------------------------------------------------------------
+    # Observed GLM Lightning Context
+    # ------------------------------------------------------------
+    if event_id:
+        try:
+            lightning_summary = build_multihazard_summary(event_id)
+
+            total_lightning = int(
+                lightning_summary["total_lightning_events"]
+            )
+            active_lightning = int(
+                lightning_summary["active_lightning_frames"]
+            )
+            peak_lightning = int(
+                lightning_summary["peak_lightning_frame_count"]
+            )
+            lightning_counts = lightning_summary["lightning_counts"]
+
+            st.markdown(
+                textwrap.dedent("""
+                <div style="margin-top: 18px; margin-bottom: 6px;
+                            font-size: 0.72rem; font-weight: bold;
+                            color: #00f0ff;
+                            font-family: 'JetBrains Mono', monospace;
+                            text-transform: uppercase;">
+                    Observed GLM Lightning Context
+                </div>
+                <div style="margin-bottom: 10px;
+                            font-size: 0.60rem; color: #94a3b8;
+                            font-family: 'JetBrains Mono', monospace;">
+                    Complementary observed lightning activity.
+                    Lightning is not predicted by the current model.
+                </div>
+                """).strip(),
+                unsafe_allow_html=True
+            )
+
+            lc1, lc2, lc3 = st.columns(3)
+
+            with lc1:
+                st.metric(
+                    "TOTAL LIGHTNING EVENTS",
+                    total_lightning
+                )
+
+            with lc2:
+                st.metric(
+                    "ACTIVE 5-MIN FRAMES",
+                    active_lightning
+                )
+
+            with lc3:
+                st.metric(
+                    "PEAK / 5 MIN",
+                    peak_lightning
+                )
+
+            # Keep observed lightning context aligned with the
+            # current StormSense 60-minute forecast horizon.
+            lightning_counts_60 = lightning_counts[:13]
+
+            timeline_labels = [
+                f"+{i * 5}m"
+                for i in range(len(lightning_counts_60))
+            ]
+
+            fig_lightning = go.Figure()
+
+            fig_lightning.add_trace(
+                go.Scatter(
+                    x=timeline_labels,
+                    y=lightning_counts_60,
+                    mode="lines+markers",
+                    name="Observed GLM Lightning",
+                    line=dict(width=2),
+                    marker=dict(size=5)
+                )
+            )
+
+            fig_lightning.update_layout(
+                height=260,
+                margin=dict(
+                    l=10,
+                    r=10,
+                    t=20,
+                    b=10
+                ),
+                xaxis_title="Time",
+                yaxis_title="Lightning Events / 5 min",
+                template="plotly_dark",
+                showlegend=False
+            )
+
+            st.plotly_chart(
+                fig_lightning,
+                use_container_width=True
+            )
+
+            # --------------------------------------------------------
+            # Geographic Lightning Detection
+            # --------------------------------------------------------
+            st.markdown(
+                textwrap.dedent("""
+                <div style="margin-top: 16px; margin-bottom: 6px;
+                            font-size: 0.72rem; font-weight: bold;
+                            color: #00f0ff;
+                            font-family: 'JetBrains Mono', monospace;
+                            text-transform: uppercase;">
+                    Lightning Detection Locations
+                </div>
+                <div style="margin-bottom: 10px;
+                            font-size: 0.60rem; color: #94a3b8;
+                            font-family: 'JetBrains Mono', monospace;">
+                    Geographic locations of observed GLM lightning events
+                    for the selected 60-minute analysis window.
+                </div>
+                """).strip(),
+                unsafe_allow_html=True
+            )
+
+            from app.lightning_sevir import load_lightning_event
+
+            lightning_result = load_lightning_event(event_id)
+            lightning_points = lightning_result["lightning"]
+
+            # Display only the same 0–60 minute window as the VIL forecast.
+            lightning_points_60 = lightning_points[
+                (lightning_points[:, 0] >= 0)
+                & (lightning_points[:, 0] <= 3600)
+            ]
+
+            if len(lightning_points_60) > 0:
+                lightning_df = pd.DataFrame({
+                    "time_min": lightning_points_60[:, 0] / 60.0,
+                    "latitude": lightning_points_60[:, 1],
+                    "longitude": lightning_points_60[:, 2],
+                })
+
+                fig_geo_lightning = go.Figure()
+
+                fig_geo_lightning.add_trace(
+                    go.Scattergeo(
+                        lon=lightning_df["longitude"],
+                        lat=lightning_df["latitude"],
+                        mode="markers",
+                        marker=dict(
+                            size=7,
+                            opacity=0.75
+                        ),
+                        text=[
+                            f"+{t:.1f} min"
+                            for t in lightning_df["time_min"]
+                        ],
+                        hovertemplate=(
+                            "Lightning detection"
+                            "<br>Time: %{text}"
+                            "<br>Lat: %{lat:.4f}"
+                            "<br>Lon: %{lon:.4f}"
+                            "<extra></extra>"
+                        ),
+                        name="Observed GLM Lightning"
+                    )
+                )
+
+                fig_geo_lightning.update_geos(
+                    showcountries=True,
+                    showcoastlines=True,
+                    showland=True,
+                    fitbounds="locations"
+                )
+
+                fig_geo_lightning.update_layout(
+                    height=430,
+                    margin=dict(
+                        l=10,
+                        r=10,
+                        t=20,
+                        b=10
+                    ),
+                    template="plotly_dark",
+                    showlegend=False
+                )
+
+                st.plotly_chart(
+                    fig_geo_lightning,
+                    use_container_width=True
+                )
+
+                st.caption(
+                    f"{len(lightning_points_60)} observed GLM "
+                    f"lightning detections displayed."
+                )
+            else:
+                st.info(
+                    "No observed GLM lightning detections were "
+                    "recorded in the 0–60 minute analysis window."
+                )
+
+        except Exception as exc:
+            st.info(
+                f"Observed lightning context unavailable "
+                f"for event {event_id}: {exc}"
             )

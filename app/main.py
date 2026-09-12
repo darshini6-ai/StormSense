@@ -285,6 +285,7 @@ elif page == "FORECAST ANALYSIS":
         past_frames=past_np,
         pred_frames=pred_np,
         actual_future_frames=actual_np,
+        event_id=event_id,
         contrast_mode=contrast_mode
     )
 
