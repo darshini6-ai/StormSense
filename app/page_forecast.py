@@ -12,11 +12,12 @@ from app.ui_theme import (
     render_benchmark_performance_panel,
     render_scientific_integrity_panel
 )
+from app.experimental_rollout import render_experimental_badge
 
 
 def render_forecast_page(event_id, past_frames, pred_frames, actual_future_frames, contrast_mode=False):
     """
-    Renders the Primary Command Console Hero Page.
+    Renders the Primary Command Console Hero Page synchronized with the global timeline.
     """
     if "view_mode" not in st.session_state:
         st.session_state.view_mode = "OVERLAY"
@@ -29,7 +30,9 @@ def render_forecast_page(event_id, past_frames, pred_frames, actual_future_frame
     if "show_vectors_layer" not in st.session_state:
         st.session_state.show_vectors_layer = True
 
-    sel_mins = st.session_state.timeline_minutes
+    sel_mins = int(st.session_state.get("timeline_minutes", 0))
+    total_pred = len(pred_frames)
+    max_mins = total_pred * 5
 
     # Determine current displayed frame
     observed_t0 = past_frames[-1]
@@ -37,9 +40,12 @@ def render_forecast_page(event_id, past_frames, pred_frames, actual_future_frame
         current_frame = observed_t0
         frame_title = f"Observed SEVIR VIL — Event {event_id} (t0 / NOW)"
     else:
-        frame_idx = (sel_mins // 5) - 1
+        frame_idx = min((sel_mins // 5) - 1, total_pred - 1)
         current_frame = pred_frames[frame_idx]
-        frame_title = f"Residual V3 Forecast (+{sel_mins}m)"
+        if sel_mins <= 60:
+            frame_title = f"Residual V3 Forecast (+{sel_mins}m)"
+        else:
+            frame_title = f"Experimental Recursive Rollout (+{sel_mins}m) [UNVALIDATED]"
 
     # Compute trajectory from relative centroid tracking across horizons
     trajectory = []
@@ -48,7 +54,7 @@ def render_forecast_page(event_id, past_frames, pred_frames, actual_future_frame
         trajectory.append(past_center)
 
     if sel_mins > 0:
-        num_steps = sel_mins // 5
+        num_steps = min(sel_mins // 5, total_pred)
         for s in range(num_steps):
             c = find_relative_storm_center(pred_frames[s], percentile=90)
             if c is not None:
@@ -60,7 +66,11 @@ def render_forecast_page(event_id, past_frames, pred_frames, actual_future_frame
         detected_cells = detect_storm_cells(current_frame, threshold=0.04, min_area=6)
 
     # Actual ground truth frame for comparison if horizon > 0
-    actual_comp_frame = actual_future_frames[(sel_mins // 5) - 1] if sel_mins > 0 else observed_t0
+    if sel_mins > 0:
+        val_idx = min((sel_mins // 5) - 1, len(actual_future_frames) - 1)
+        actual_comp_frame = actual_future_frames[val_idx]
+    else:
+        actual_comp_frame = observed_t0
 
     # ------------------------------------------------------------
     # MAIN 2-COLUMN OPERATIONAL WORKSPACE (RADAR AS HERO ~70%)
@@ -155,7 +165,7 @@ def render_forecast_page(event_id, past_frames, pred_frames, actual_future_frame
                     </div>
                     <div style="display: flex; justify-content: space-between; margin-top: 2px;">
                         <span style="color: var(--text-outline);">ESTIMATED DISPLACEMENT:</span>
-                        <span style="color: #34d399;">Derived from available model data</span>
+                        <span style="color: #34d399;">Derived from model forecast</span>
                     </div>
                 </div>
                 <div style="background: var(--surface-low); border: 1px solid var(--border-outline); border-radius: 4px; padding: 5px 10px; font-family: 'JetBrains Mono', monospace;">
@@ -174,74 +184,17 @@ def render_forecast_page(event_id, past_frames, pred_frames, actual_future_frame
         )
 
         # ------------------------------------------------------------
-        # Interactive Forecast Timeline Controller (T+00 to T+60)
+        # Validation / Horizon Status Indicator
         # ------------------------------------------------------------
-        st.markdown(
-            textwrap.dedent(f"""
-            <div style="background: var(--surface-low); border: 1px solid var(--border-outline); border-radius: 4px; padding: 6px 10px; margin-bottom: 8px;">
-                <div style="display: flex; justify-content: space-between; align-items: center; font-family: 'JetBrains Mono', monospace; font-size: 0.65rem;">
-                    <div style="display: flex; align-items: center; gap: 6px;">
-                        <span style="color: var(--primary-cyan); font-weight: bold;">⏱️ FORECAST TIMELINE</span>
-                    </div>
-                    <div style="display: flex; align-items: center; gap: 12px;">
-                        <div><span style="color: var(--text-outline);">LEAD TIME:</span> <strong style="color: #00f0ff;">+{sel_mins} MIN</strong></div>
-                        <div><span style="color: var(--text-outline);">FRAME:</span> <strong style="color: #e2e8f0;">t+{sel_mins // 5 if sel_mins > 0 else 0} / 12</strong></div>
-                        <div><span style="color: var(--text-outline);">INTERVAL:</span> <strong style="color: #34d399;">5 MIN</strong></div>
-                        <div><span style="color: var(--text-outline);">HORIZON:</span> <strong style="color: #c084fc;">60 MIN</strong></div>
-                    </div>
-                </div>
-            </div>
-            """).strip(),
-            unsafe_allow_html=True
-        )
-
-        timeline_horizons = [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60]
-        timeline_cols = st.columns(len(timeline_horizons))
-
-        for idx, h_mins in enumerate(timeline_horizons):
-            with timeline_cols[idx]:
-                is_active = (sel_mins == h_mins)
-                btn_lbl = f"T+{h_mins:02d}"
-                if st.button(
-                    btn_lbl,
-                    key=f"tl_btn_{h_mins}",
-                    use_container_width=True,
-                    type="primary" if is_active else "secondary"
-                ):
-                    st.session_state.timeline_minutes = h_mins
-                    st.rerun()
-
-        # Step Back / Step Forward / Reset Buttons
-        ctrl_c1, ctrl_c2, ctrl_c3, ctrl_c4 = st.columns([1, 1, 1, 3])
-        with ctrl_c1:
-            if st.button("◀ -5m", use_container_width=True):
-                st.session_state.timeline_minutes = max(0, sel_mins - 5)
-                st.rerun()
-        with ctrl_c2:
-            if st.button("+5m ▶", use_container_width=True):
-                st.session_state.timeline_minutes = min(60, sel_mins + 5)
-                st.rerun()
-        with ctrl_c3:
-            if st.button("RESET (t0)", use_container_width=True):
-                st.session_state.timeline_minutes = 0
-                st.rerun()
-        with ctrl_c4:
-            st.markdown(
-                textwrap.dedent("""
-                <div style="font-family: 'JetBrains Mono', monospace; font-size: 0.60rem; color: var(--text-outline); text-align: right; padding-top: 6px;">
-                    12 INPUT FRAMES (-60m to 0m) ➔ 12 PREDICTED FRAMES (+5m to +60m)
-                </div>
-                """).strip(),
-                unsafe_allow_html=True
-            )
+        render_experimental_badge(sel_mins)
 
         # ------------------------------------------------------------
         # Side-by-Side Validation Strip: Observed vs Predicted vs Actual
         # ------------------------------------------------------------
         val_mins = sel_mins if sel_mins > 0 else 15
-        val_idx = (val_mins // 5) - 1
+        val_idx = min((val_mins // 5) - 1, total_pred - 1)
         pred_val_frame = pred_frames[val_idx]
-        actual_val_frame = actual_future_frames[val_idx]
+        actual_val_frame = actual_future_frames[val_idx] if len(actual_future_frames) > val_idx else actual_future_frames[-1]
 
         event_horizon_mse = float(np.mean((pred_val_frame - actual_val_frame) ** 2))
         event_horizon_mae = float(np.mean(np.abs(pred_val_frame - actual_val_frame)))
@@ -277,7 +230,7 @@ def render_forecast_page(event_id, past_frames, pred_frames, actual_future_frame
             st.markdown(
                 textwrap.dedent(f"""
                 <div style="text-align: center; font-family: 'JetBrains Mono', monospace; font-size: 0.65rem; color: #c084fc; margin-bottom: 2px;">
-                    Residual V3 Forecast (+{val_mins}m)
+                    Forecast Output (+{val_mins}m)
                 </div>
                 <img src="{frame_to_base64_png(pred_val_frame, 'turbo', contrast=contrast_mode)}" style="width: 100%; border-radius: 3px; border: 1px solid #c084fc;" />
                 """).strip(),

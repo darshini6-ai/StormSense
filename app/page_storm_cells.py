@@ -7,10 +7,13 @@ import streamlit as st
 
 from app.map_utils import create_vil_map, find_relative_storm_center
 from app.storm_tracker import detect_storm_cells
+from app.experimental_rollout import render_experimental_badge
 
 
 def render_storm_cells_page(pred_frames, contrast_mode=False):
-    """Renders the dedicated Storm Cells analytical workspace."""
+    """
+    Renders the dedicated Storm Cells analytical workspace synchronized with global timeline.
+    """
     st.markdown(
         textwrap.dedent("""
         <div style="margin-bottom: 8px;">
@@ -25,14 +28,29 @@ def render_storm_cells_page(pred_frames, contrast_mode=False):
         unsafe_allow_html=True
     )
 
-    cell_horizon = st.slider(
-        "Forecast Horizon for Cell Diagnostics",
-        min_value=5,
-        max_value=60,
-        value=15,
-        step=5,
-        format="+%d min"
-    )
+    num_pred = len(pred_frames)
+    max_h = num_pred * 5
+    global_mins = int(st.session_state.get("timeline_minutes", 15))
+    default_val = global_mins if (global_mins >= 5 and global_mins <= max_h and global_mins % 5 == 0) else 15
+
+    col_slider, col_badge = st.columns([2.0, 1.0], gap="small")
+    with col_slider:
+        cell_horizon = st.slider(
+            "Forecast Horizon for Cell Diagnostics",
+            min_value=5,
+            max_value=max_h,
+            value=default_val,
+            step=5,
+            format="+%d min",
+            key="sc_horizon_slider"
+        )
+        if cell_horizon != st.session_state.get("timeline_minutes", 0):
+            st.session_state.timeline_minutes = cell_horizon
+            st.session_state.global_timeline = cell_horizon
+
+    with col_badge:
+        st.markdown("<div style='height: 24px;'></div>", unsafe_allow_html=True)
+        render_experimental_badge(cell_horizon)
 
     step_idx = (cell_horizon // 5) - 1
     analyzed_frame = pred_frames[step_idx]
@@ -46,7 +64,7 @@ def render_storm_cells_page(pred_frames, contrast_mode=False):
     with c_left:
         history_rows = []
         full_trajectory = []
-        for s in range(12):
+        for s in range(num_pred):
             m = (s + 1) * 5
             f = pred_frames[s]
             cells_s = detect_storm_cells(f, threshold=0.04, min_area=6)
@@ -57,7 +75,7 @@ def render_storm_cells_page(pred_frames, contrast_mode=False):
             top_cell = cells_s[0] if len(cells_s) > 0 else None
             rel_cx = f"({center[0] - 64.0:+.1f}, {64.0 - center[1]:+.1f})" if center else "N/A"
             history_rows.append({
-                "Horizon": f"+{m}m",
+                "Horizon": f"+{m}m" + (" [EXP]" if m > 60 else ""),
                 "Cores": len(cells_s),
                 "Centroid (X, Y)": rel_cx,
                 "Peak VIL": f"{float(f.max()):.3f}",
@@ -116,14 +134,15 @@ def render_storm_cells_page(pred_frames, contrast_mode=False):
             )
 
         st.markdown("<div style='height: 4px;'></div>", unsafe_allow_html=True)
-        st.markdown("**Complete 60-Minute Forecast Progression:**")
+        st.markdown(f"**Complete {'120-Minute' if num_pred > 12 else '60-Minute'} Forecast Progression:**")
         df_hist = pd.DataFrame(history_rows)
         st.dataframe(df_hist, use_container_width=True, hide_index=True)
 
     with c_right:
+        title_text = f"Detected Cells & Trajectory at +{cell_horizon}m" if cell_horizon <= 60 else f"Detected Cells & Trajectory at +{cell_horizon}m [EXPERIMENTAL]"
         cell_fig = create_vil_map(
             analyzed_frame,
-            title=f"Detected Cells & Trajectory at +{cell_horizon}m",
+            title=title_text,
             trajectory=full_trajectory,
             storm_cells=detected,
             contrast_enhance=contrast_mode

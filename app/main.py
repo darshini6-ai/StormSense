@@ -30,6 +30,14 @@ from app.page_storm_cells import render_storm_cells_page
 from app.page_risk_analysis import render_risk_analysis_page
 from app.page_backtest import render_backtest_page
 from app.page_metrics import render_metrics_page
+from app.playback import (
+    initialize_playback,
+    render_global_playback
+)
+from app.experimental_rollout import (
+    generate_recursive_rollout_2hr,
+    get_actual_frames_120
+)
 
 # ------------------------------------------------------------
 # System Paths & Configurations
@@ -126,11 +134,26 @@ def get_event_data(sequence_index):
 
 
 @st.cache_data
-def run_forecast(sequence_index):
-    """Run model inference with Residual V3 and produce 12-frame forecast."""
+def run_forecast(sequence_index, enable_2hr=False):
+    """
+    Run model inference with Residual V3.
+    Standard mode produces validated 12-frame (+60m) forecast.
+    Experimental mode produces 24-frame (+120m) recursive rollout.
+    """
     event_id, past, actual_future, _ = get_event_data(sequence_index)
     model = get_model()
 
+    if enable_2hr:
+        try:
+            pred_np = generate_recursive_rollout_2hr(model, past, DEVICE)
+            actual_24 = get_actual_frames_120(FILE_PATH, sequence_index, IMAGE_SIZE)
+            actual_np = actual_24 if actual_24 is not None else actual_future[:, 0].numpy()
+            past_np = past[:, 0].numpy()
+            return event_id, past_np, pred_np, actual_np
+        except Exception:
+            pass  # Fallback to standard 60-min if rollout fails
+
+    # Standard validated 60-minute forecast
     model_input = past.unsqueeze(0).to(DEVICE)
     with torch.no_grad():
         prediction = model(
@@ -169,8 +192,7 @@ def get_benchmark_data():
 # ------------------------------------------------------------
 # Session State Initialization
 # ------------------------------------------------------------
-if "timeline_minutes" not in st.session_state:
-    st.session_state.timeline_minutes = 15
+initialize_playback()
 if "selected_event_idx" not in st.session_state:
     st.session_state.selected_event_idx = 0
 
@@ -250,6 +272,17 @@ with st.sidebar:
         help="Applies square-root transform for visualization only"
     )
 
+    exp_2hr = st.checkbox(
+        "⚡ Experimental 2-Hour Rollout",
+        value=st.session_state.get("experimental_2hr_mode", False),
+        help="UNVALIDATED recursive rollout extending forecast from +60m to +120m"
+    )
+    if exp_2hr != st.session_state.get("experimental_2hr_mode", False):
+        st.session_state.experimental_2hr_mode = exp_2hr
+        if not exp_2hr and st.session_state.timeline_minutes > 60:
+            st.session_state.timeline_minutes = 60
+        st.rerun()
+
     render_sidebar_telemetry(DEVICE_LABEL)
 
 
@@ -257,15 +290,20 @@ with st.sidebar:
 # Run Inference Pipeline & Load Data
 # ------------------------------------------------------------
 current_event_idx = st.session_state.selected_event_idx
-event_id, past_np, pred_np, actual_np = run_forecast(current_event_idx)
+is_2hr_active = st.session_state.get("experimental_2hr_mode", False)
+event_id, past_np, pred_np, actual_np = run_forecast(current_event_idx, enable_2hr=is_2hr_active)
 bench_data = get_benchmark_data()
 
 
 # ------------------------------------------------------------
-# Top Header & Pipeline Breadcrumb
+# Top Header, Pipeline Breadcrumb & Global Playback
 # ------------------------------------------------------------
 render_stitch_header(event_id, DEVICE_LABEL)
 render_pipeline_breadcrumb(st.session_state.timeline_minutes)
+
+# Render Global Playback on all operational forecasting pages
+if page in ["COMMAND CONSOLE", "FORECAST ANALYSIS", "STORM CELLS", "RISK ANALYSIS"]:
+    render_global_playback()
 
 
 # ------------------------------------------------------------
@@ -302,13 +340,15 @@ elif page == "RISK ANALYSIS":
     )
 
 elif page == "BACKTEST":
+    # Backtest operates strictly on validated 60-min window
     render_backtest_page(
         past_frames=past_np,
-        pred_frames=pred_np,
-        actual_future_frames=actual_np,
+        pred_frames=pred_np[:12],
+        actual_future_frames=actual_np[:12],
         bench_data=bench_data,
         contrast_mode=contrast_mode
     )
 
 elif page == "MODEL METRICS":
+    # Model metrics remain completely independent and scientifically unperturbed
     render_metrics_page(bench_data)

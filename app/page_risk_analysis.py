@@ -5,10 +5,13 @@ import numpy as np
 import streamlit as st
 import plotly.graph_objects as go
 from app.map_utils import create_vil_map
+from app.experimental_rollout import render_experimental_badge
 
 
 def render_risk_analysis_page(pred_frames, contrast_mode=False):
-    """Renders the Threat Alerts & Risk Analysis Page."""
+    """
+    Renders the Threat Alerts & Risk Analysis Page synchronized with global timeline.
+    """
     st.markdown(
         textwrap.dedent("""
         <div style="margin-bottom: 8px;">
@@ -23,14 +26,27 @@ def render_risk_analysis_page(pred_frames, contrast_mode=False):
         unsafe_allow_html=True
     )
 
+    num_pred = len(pred_frames)
+    lead_options = [(s + 1) * 5 for s in range(num_pred)]
+
+    global_mins = int(st.session_state.get("timeline_minutes", 15))
+    default_val = global_mins if global_mins in lead_options else (15 if 15 in lead_options else lead_options[0])
+
     r_col1, r_col2 = st.columns([1, 1])
     with r_col1:
         risk_horizon = st.select_slider(
             "Select Forecast Horizon",
-            options=[5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60],
-            value=15,
-            format_func=lambda x: f"+{x} min"
+            options=lead_options,
+            value=default_val,
+            format_func=lambda x: f"+{x} min" if x <= 60 else f"+{x} min [EXP]",
+            key="ra_horizon_select_slider"
         )
+        if risk_horizon != st.session_state.get("timeline_minutes", 0):
+            st.session_state.timeline_minutes = risk_horizon
+            st.session_state.global_timeline = risk_horizon
+
+        render_experimental_badge(risk_horizon)
+
     with r_col2:
         threshold_val = st.slider(
             "Prototype VIL Threshold",
@@ -110,9 +126,10 @@ def render_risk_analysis_page(pred_frames, contrast_mode=False):
         )
 
     st.markdown("<div style='height: 4px;'></div>", unsafe_allow_html=True)
+    title_suffix = f"at +{risk_horizon}m" + (" [EXPERIMENTAL]" if risk_horizon > 60 else "")
     map_fig = create_vil_map(
         r_frame,
-        title=f"Thresholded Threat Mask (VIL >= {threshold_val:.2f}) at +{risk_horizon}m",
+        title=f"Thresholded Threat Mask (VIL >= {threshold_val:.2f}) {title_suffix}",
         contrast_enhance=contrast_mode
     )
     st.plotly_chart(map_fig, use_container_width=True)
