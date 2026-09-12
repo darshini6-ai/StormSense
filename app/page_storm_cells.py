@@ -13,6 +13,7 @@ from app.experimental_rollout import render_experimental_badge
 def render_storm_cells_page(pred_frames, contrast_mode=False):
     """
     Renders the dedicated Storm Cells analytical workspace synchronized with global timeline.
+    Only reads timeline_minutes as single source of truth.
     """
     st.markdown(
         textwrap.dedent("""
@@ -30,26 +31,30 @@ def render_storm_cells_page(pred_frames, contrast_mode=False):
 
     num_pred = len(pred_frames)
     max_h = num_pred * 5
-    global_mins = int(st.session_state.get("timeline_minutes", 15))
-    default_val = global_mins if (global_mins >= 5 and global_mins <= max_h and global_mins % 5 == 0) else 15
+    current_minutes = int(st.session_state.get("timeline_minutes", 0))
 
-    col_slider, col_badge = st.columns([2.0, 1.0], gap="small")
-    with col_slider:
-        cell_horizon = st.slider(
-            "Forecast Horizon for Cell Diagnostics",
-            min_value=5,
-            max_value=max_h,
-            value=default_val,
-            step=5,
-            format="+%d min",
-            key="sc_horizon_slider"
+    # T+00 Handling: map T+00 to first forecast frame (+5m) for core diagnostics
+    if current_minutes == 0:
+        cell_horizon = 5
+        note_t0 = " (Showing T+05 for cell diagnostics; T+00 is observed frame)"
+    else:
+        cell_horizon = min(current_minutes, max_h)
+        note_t0 = ""
+
+    col_info, col_badge = st.columns([2.0, 1.0], gap="small")
+    with col_info:
+        st.markdown(
+            f"""
+            <div style="background: var(--surface-low); border: 1px solid var(--border-outline); border-radius: 4px; padding: 6px 10px; font-family: 'JetBrains Mono', monospace; font-size: 0.68rem;">
+                <span style="color: var(--text-outline);">SYNCHRONIZED TIMELINE HORIZON:</span>
+                <strong style="color: #00f0ff;">+{cell_horizon} MIN</strong>
+                <span style="color: #94a3b8; font-size: 0.60rem;">{note_t0}</span>
+            </div>
+            """,
+            unsafe_allow_html=True
         )
-        if cell_horizon != st.session_state.get("timeline_minutes", 0):
-            st.session_state.timeline_minutes = cell_horizon
-            st.session_state.global_timeline = cell_horizon
 
     with col_badge:
-        st.markdown("<div style='height: 24px;'></div>", unsafe_allow_html=True)
         render_experimental_badge(cell_horizon)
 
     step_idx = (cell_horizon // 5) - 1

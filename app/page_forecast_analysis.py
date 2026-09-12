@@ -22,6 +22,7 @@ def render_forecast_analysis_page(
 ):
     """
     Renders the Analytical Forecast Analysis Workspace synchronized with global timeline.
+    Only reads timeline_minutes as single source of truth.
     """
     st.markdown(
         textwrap.dedent("""
@@ -39,30 +40,29 @@ def render_forecast_analysis_page(
 
     num_pred = len(pred_frames)
     max_mins = num_pred * 5
-    lead_options = [(s + 1) * 5 for s in range(num_pred)]
+    current_minutes = int(st.session_state.get("timeline_minutes", 0))
 
-    # Synchronize with global timeline state
-    global_mins = int(st.session_state.get("timeline_minutes", 15))
-    if global_mins in lead_options:
-        selected_lead = global_mins
+    # T+00 Handling: map T+00 to first forecast frame (+5m) for forecast analysis
+    if current_minutes == 0:
+        selected_lead = 5
+        lead_note = " (Showing T+05 for forecast analysis; T+00 is observed frame)"
     else:
-        selected_lead = 15 if 15 in lead_options else lead_options[0]
+        selected_lead = min(current_minutes, max_mins)
+        lead_note = ""
 
     fa_col_ctrl, fa_col_map = st.columns([1.1, 1.9], gap="small")
 
     with fa_col_ctrl:
-        new_lead = st.select_slider(
-            "Forecast Horizon",
-            options=lead_options,
-            value=selected_lead,
-            format_func=lambda x: f"+{x} min" if x <= 60 else f"+{x} min [EXP]",
-            key="fa_horizon_select_slider"
+        st.markdown(
+            f"""
+            <div style="background: var(--surface-low); border: 1px solid var(--border-outline); border-radius: 4px; padding: 6px 10px; font-family: 'JetBrains Mono', monospace; font-size: 0.68rem; margin-bottom: 6px;">
+                <span style="color: var(--text-outline);">SYNCHRONIZED TIMELINE HORIZON:</span>
+                <strong style="color: #00f0ff;">+{selected_lead} MIN</strong>
+                <span style="color: #94a3b8; font-size: 0.60rem;">{lead_note}</span>
+            </div>
+            """,
+            unsafe_allow_html=True
         )
-        if new_lead != st.session_state.get("timeline_minutes", 0):
-            st.session_state.timeline_minutes = new_lead
-            st.session_state.global_timeline = new_lead
-            selected_lead = new_lead
-
         render_experimental_badge(selected_lead)
 
         step_idx = (selected_lead // 5) - 1

@@ -11,6 +11,7 @@ from app.experimental_rollout import render_experimental_badge
 def render_risk_analysis_page(pred_frames, contrast_mode=False):
     """
     Renders the Threat Alerts & Risk Analysis Page synchronized with global timeline.
+    Only reads timeline_minutes as single source of truth.
     """
     st.markdown(
         textwrap.dedent("""
@@ -27,24 +28,29 @@ def render_risk_analysis_page(pred_frames, contrast_mode=False):
     )
 
     num_pred = len(pred_frames)
-    lead_options = [(s + 1) * 5 for s in range(num_pred)]
+    max_mins = num_pred * 5
+    current_minutes = int(st.session_state.get("timeline_minutes", 0))
 
-    global_mins = int(st.session_state.get("timeline_minutes", 15))
-    default_val = global_mins if global_mins in lead_options else (15 if 15 in lead_options else lead_options[0])
+    # T+00 Handling: map T+00 to first forecast frame (+5m) for risk analysis
+    if current_minutes == 0:
+        risk_horizon = 5
+        note_t0 = " (Showing T+05 for risk analysis; T+00 is observed frame)"
+    else:
+        risk_horizon = min(current_minutes, max_mins)
+        note_t0 = ""
 
     r_col1, r_col2 = st.columns([1, 1])
     with r_col1:
-        risk_horizon = st.select_slider(
-            "Select Forecast Horizon",
-            options=lead_options,
-            value=default_val,
-            format_func=lambda x: f"+{x} min" if x <= 60 else f"+{x} min [EXP]",
-            key="ra_horizon_select_slider"
+        st.markdown(
+            f"""
+            <div style="background: var(--surface-low); border: 1px solid var(--border-outline); border-radius: 4px; padding: 6px 10px; font-family: 'JetBrains Mono', monospace; font-size: 0.68rem; margin-bottom: 6px;">
+                <span style="color: var(--text-outline);">SYNCHRONIZED TIMELINE HORIZON:</span>
+                <strong style="color: #00f0ff;">+{risk_horizon} MIN</strong>
+                <span style="color: #94a3b8; font-size: 0.60rem;">{note_t0}</span>
+            </div>
+            """,
+            unsafe_allow_html=True
         )
-        if risk_horizon != st.session_state.get("timeline_minutes", 0):
-            st.session_state.timeline_minutes = risk_horizon
-            st.session_state.global_timeline = risk_horizon
-
         render_experimental_badge(risk_horizon)
 
     with r_col2:

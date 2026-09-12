@@ -209,7 +209,6 @@ def render_global_playback():
         min_value=0,
         max_value=max_min,
         step=5,
-        value=current_mins,
         format="T+%d min",
         key="global_timeline",
         on_change=timeline_changed,
