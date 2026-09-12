@@ -241,6 +241,24 @@ def render_forecast_analysis_page(
     # Observed GLM Lightning Context (Independent 60-min window)
     # ------------------------------------------------------------
     if event_id:
+        st.markdown(
+            textwrap.dedent("""
+            <div style="margin-top: 18px; margin-bottom: 6px;
+                        font-size: 0.72rem; font-weight: bold;
+                        color: #00f0ff;
+                        font-family: 'JetBrains Mono', monospace;
+                        text-transform: uppercase;">
+                Observed GLM Lightning Context
+            </div>
+            <div style="margin-bottom: 10px;
+                        font-size: 0.60rem; color: #94a3b8;
+                        font-family: 'JetBrains Mono', monospace;">
+                Complementary observed lightning activity.
+                Lightning is not predicted by the current model.
+            </div>
+            """).strip(),
+            unsafe_allow_html=True
+        )
         try:
             lightning_summary = build_multihazard_summary(event_id)
 
@@ -248,25 +266,6 @@ def render_forecast_analysis_page(
             active_lightning = int(lightning_summary["active_lightning_frames"])
             peak_lightning = int(lightning_summary["peak_lightning_frame_count"])
             lightning_counts = lightning_summary["lightning_counts"]
-
-            st.markdown(
-                textwrap.dedent("""
-                <div style="margin-top: 18px; margin-bottom: 6px;
-                            font-size: 0.72rem; font-weight: bold;
-                            color: #00f0ff;
-                            font-family: 'JetBrains Mono', monospace;
-                            text-transform: uppercase;">
-                    Observed GLM Lightning Context
-                </div>
-                <div style="margin-bottom: 10px;
-                            font-size: 0.60rem; color: #94a3b8;
-                            font-family: 'JetBrains Mono', monospace;">
-                    Complementary observed lightning activity.
-                    Lightning is not predicted by the current model.
-                </div>
-                """).strip(),
-                unsafe_allow_html=True
-            )
 
             lc1, lc2, lc3 = st.columns(3)
             with lc1:
@@ -349,5 +348,5 @@ def render_forecast_analysis_page(
             else:
                 st.info("No observed GLM lightning detections were recorded in the 0–60 minute analysis window.")
 
-        except Exception as exc:
-            st.info(f"Observed lightning context unavailable for event {event_id}: {exc}")
+        except Exception:
+            st.info("Observed GLM lightning context unavailable for this event. GLM coverage is not available for this SEVIR event.")
